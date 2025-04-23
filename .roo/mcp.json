@@ -1,5 +1,14 @@
 {
   "mcpServers": {
-
+    "quillopy": {
+      "command": "npx",
+      "args": ["-y", "@quillopy/mcp"],
+      "env": {
+        "QUILLOPY_API_KEY": "sk_8zknFgH2pg-maTHvdURPJTH7jresZ1lVDrsNIwTvERY7pWrtwLT2MZmXtj2B-SXf3FQFM6lqP26vcAScwznRkw"
+      }
+    },
+    "getmcp": {
+      "url": "http://localhost:1598/sse"
+    }
   }
 }
