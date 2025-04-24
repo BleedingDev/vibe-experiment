@@ -1,0 +1,9 @@
+[project]
+name = "graph-memory"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "graphiti-core>=0.10.5",
+]
