@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "graphiti-core>=0.10.5",
+    "pydantic[email,timezone]>=2.11.3",
 ]
 
 [dependency-groups]
@@ -16,3 +17,5 @@ dev = [
 [tool.uv.pip]
 # Set generate-hashes for uv
 generate-hashes = true
+[tool.mypy]
+plugins = ['pydantic.mypy']
