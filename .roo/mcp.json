@@ -2,13 +2,34 @@
   "mcpServers": {
     "quillopy": {
       "command": "npx",
-      "args": ["-y", "@quillopy/mcp"],
+      "args": [
+        "-y",
+        "@quillopy/mcp"
+      ],
       "env": {
         "QUILLOPY_API_KEY": "sk_8zknFgH2pg-maTHvdURPJTH7jresZ1lVDrsNIwTvERY7pWrtwLT2MZmXtj2B-SXf3FQFM6lqP26vcAScwznRkw"
-      }
+      },
+      "alwaysAllow": [
+        "quillopy_search",
+        "quillopy_chat_with_code"
+      ]
     },
     "getmcp": {
       "url": "http://localhost:1598/sse"
+    },
+    "vsc-mcp": {
+      "command": "bun",
+      "args": [
+        "D:\\Side\\vsc-mcp\\src\\index.ts"
+      ],
+      "env": {
+        "LOG_DIR": "D:\\Side\\vsc-mcp\\logs",
+        "ALLOWED_DIRECTORIES": "D:\\Side\\graph-memory"
+      },
+      "alwaysAllow": [
+        "read_symbol",
+        "read_file"
+      ]
     }
   }
 }
