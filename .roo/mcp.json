@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "quillopy": {
-      "command": "npx",
+      "command": "C:\\Users\\pegak\\.proto\\shims\\bunx",
       "args": [
         "-y",
         "@quillopy/mcp"
@@ -14,11 +14,23 @@
         "quillopy_chat_with_code"
       ]
     },
+    "context7": {
+      "command": "C:\\Users\\pegak\\.proto\\shims\\bunx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@latest"
+      ],
+      "disabled": false,
+      "alwaysAllow": [
+        "resolve-library-id",
+        "get-library-docs"
+      ]
+    },
     "getmcp": {
       "url": "http://localhost:1598/sse"
     },
     "vsc-mcp": {
-      "command": "bun",
+      "command": "C:\\Users\\pegak\\.proto\\shims\\bun",
       "args": [
         "D:\\Side\\vsc-mcp\\src\\index.ts"
       ],
