@@ -94,18 +94,21 @@ class VideoDownloader:
         if self.playlist_items:
             ydl_opts["playlist_items"] = self.playlist_items
 
-        postprocessors = [
-            {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
-            {"key": "FFmpegMetadata"},
-        ]
-        if self.format.find("mp4") != -1 or self.extract_audio:
-            postprocessors.append({"key": "EmbedThumbnail"})
+        # Set up postprocessors based on options
+        postprocessors = []
         if self.extract_audio:
-            postprocessors.insert(0, {
+            postprocessors.append({
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             })
+            postprocessors.append({"key": "FFmpegMetadata"})
+            # Optionally embed thumbnail for mp3
+            postprocessors.append({"key": "EmbedThumbnail"})
+        else:
+            postprocessors.append({"key": "FFmpegVideoConvertor", "preferedformat": "mp4"})
+            postprocessors.append({"key": "FFmpegMetadata"})
+            postprocessors.append({"key": "EmbedThumbnail"})
         ydl_opts["postprocessors"] = postprocessors
 
         if self.cookies_file:
@@ -309,7 +312,9 @@ async def main() -> int:
     try:
         # Adjust format if force-mp4 is specified
         format_spec = args.format
-        if args.force_mp4 and format_spec == "best":
+        if args.audio_only and args.format == "best":
+            format_spec = "bestaudio/best"
+        elif args.force_mp4 and format_spec == "best":
             format_spec = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
             logger.info("Forcing MP4 output format")
 
