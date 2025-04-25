@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-YouTube Channel Downloader
+YouTube Video Downloader
 
-A script to download all videos from a YouTube channel using yt-dlp.
+A script to download videos from YouTube using yt-dlp.
+Can download entire channels or specific videos from a list.
 Uses modern Python features, proper error handling, and async operations.
 """
 
@@ -28,12 +29,12 @@ logging.basicConfig(
 logger = logging.getLogger("yt-channel-downloader")
 
 
-class ChannelDownloader:
-    """Handle downloading of YouTube channel content."""
+class VideoDownloader:
+    """Handle downloading of YouTube videos or channels."""
 
     def __init__(
         self,
-        channel_url: str,
+        urls: List[str],
         output_dir: Path,
         format: str = "best",
         limit: Optional[int] = None,
@@ -56,7 +57,7 @@ class ChannelDownloader:
             playlist_items: Comma-separated list of playlist items to download
             cookies_file: Path to cookies file for authenticated access
         """
-        self.channel_url = channel_url
+        self.urls = urls
         self.output_dir = output_dir
         self.format = format
         self.limit = limit
@@ -210,9 +211,12 @@ class ChannelDownloader:
             # Don't re-raise - we want downloads to continue even if progress reporting fails
 
     async def download(self) -> None:
-        """Download all videos from the channel asynchronously."""
+        """Download all videos asynchronously."""
         try:
-            logger.info(f"Starting download of channel: {self.channel_url}")
+            if len(self.urls) == 1:
+                logger.info(f"Starting download of URL: {self.urls[0]}")
+            else:
+                logger.info(f"Starting download of {len(self.urls)} URLs")
             logger.info(f"Output directory: {self.output_dir}")
 
             # Ensure output directory exists
@@ -251,31 +255,50 @@ class ChannelDownloader:
 
         try:
             with yt_dlp.YoutubeDL(options) as ydl:
-                logger.info("Extracting channel information...")
-                # First extract info to get video count
-                info_dict = ydl.extract_info(self.channel_url, download=False)
+                # Process each URL
+                if len(self.urls) > 1:
+                    logger.info(f"Will download {len(self.urls)} videos/channels")
 
-                if info_dict is None:
-                    logger.error("Could not extract channel information")
-                    return
+                # First extract info to get details about content
+                logger.info("Extracting video information...")
 
-                # Get channel name and video count
-                channel_name = info_dict.get('channel', info_dict.get('uploader', 'Unknown Channel'))
+                # Count total videos to be downloaded
+                total_videos = 0
+                single_videos = []
+                playlists = []
 
-                # Handle both playlist and single video
-                if 'entries' in info_dict:
-                    videos = list(info_dict['entries'])
-                    video_count = len(videos)
-                    logger.info(f"Found channel: {channel_name} with {video_count} videos")
+                for url in self.urls:
+                    try:
+                        info_dict = ydl.extract_info(url, download=False)
 
-                    if self.limit:
-                        logger.info(f"Will download up to {self.limit} videos due to specified limit")
-                else:
-                    logger.info(f"Found single video: {info_dict.get('title', 'Unknown')}")
+                        if info_dict is None:
+                            logger.warning(f"Could not extract information for {url}")
+                            continue
+
+                        # Determine if this is a playlist/channel or single video
+                        if 'entries' in info_dict:
+                            # This is a playlist or channel
+                            videos = list(info_dict['entries'])
+                            video_count = len(videos)
+                            channel_name = info_dict.get('channel', info_dict.get('uploader', 'Unknown Channel'))
+                            logger.info(f"Found playlist/channel: {channel_name} with {video_count} videos")
+                            total_videos += video_count
+                            playlists.append(url)
+                        else:
+                            # This is a single video
+                            logger.info(f"Found video: {info_dict.get('title', 'Unknown')}")
+                            total_videos += 1
+                            single_videos.append(url)
+                    except Exception as e:
+                        logger.error(f"Error extracting info for {url}: {e}")
+
+                if self.limit and total_videos > self.limit:
+                    logger.info(f"Will download up to {self.limit} videos due to specified limit")
 
                 # Now actually download
-                logger.info("Starting downloads...")
-                ydl.download([self.channel_url])
+                logger.info(f"Starting download of {total_videos} videos...")
+                ydl.download(self.urls)
+
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"Download error: {e}")
             if "ffmpeg" in str(e).lower():
@@ -306,10 +329,12 @@ async def main() -> int:
         )
         return 1
     parser = argparse.ArgumentParser(
-        description="Download all videos from a YouTube channel using yt-dlp"
+        description="Download videos or channels from YouTube using yt-dlp"
     )
     parser.add_argument(
-        "channel_url", help="URL of the YouTube channel to download"
+        "-u", "--urls",
+        nargs="+",  # Accept one or more URLs
+        help="One or more URLs of YouTube videos or channels to download"
     )
     parser.add_argument(
         "-o", "--output-dir",
@@ -385,13 +410,8 @@ async def main() -> int:
             format_spec = "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
             logger.info("Forcing MP4 output format")
 
-        # If user wants native progress, modify yt-dlp options accordingly
-        if use_native_progress:
-            logger.info("Using yt-dlp's native progress display")
-            # We'll modify the ChannelDownloader class to handle this
-
-        downloader = ChannelDownloader(
-            channel_url=args.channel_url,
+        downloader = VideoDownloader(
+            urls=args.urls,  # Pass the list of URLs
             output_dir=args.output_dir,
             format=format_spec,
             limit=args.limit,
@@ -412,7 +432,6 @@ async def main() -> int:
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))
