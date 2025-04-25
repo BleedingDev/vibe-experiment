@@ -1,5 +1,6 @@
 import argparse
 import logging
+import asyncio
 from pathlib import Path
 import os
 import subprocess
@@ -8,6 +9,7 @@ import json
 from db import Database
 from download import VideoDownloader
 from transcriber import Transcriber
+from graphiti_manager import GraphitiManager
 
 # Configure logging
 tlogging = logging.getLogger(__name__)
@@ -86,9 +88,24 @@ def prepare(args):
                     videos = videos[: args.limit]
                     logging.info(f"Limited to {len(videos)} videos as requested")
 
-                # Add videos to database
+                # Extract channel ID from the URL
+                channel_id = None
+                try:
+                    downloader = VideoDownloader(
+                        urls=[args.channel_url], output_dir=DOWNLOAD_DIR
+                    )
+                    channel_id = downloader.extract_channel_id(args.channel_url)
+                except Exception as e:
+                    logging.error(f"Error extracting channel ID: {e}")
+
+                # Use channel ID as path prefix if available
                 for video in videos:
-                    db.add_video(video["id"], video["title"], "youtube")
+                    # If we have a channel ID, use it as part of the path-based ID
+                    if channel_id:
+                        path_id = f"{channel_id}/{video['id']}"
+                    else:
+                        path_id = video["id"]
+                    db.add_video(path_id, video["title"], "youtube")
 
                 print(f"Ingested {len(videos)} videos from channel")
                 return
@@ -103,10 +120,28 @@ def prepare(args):
             urls=urls, output_dir=DOWNLOAD_DIR, limit=args.limit
         )
         entries = downloader.get_info()
+
         for entry in entries:
-            vid = entry.get("id")
+            video_id = entry.get("id")
             title = entry.get("title", "")
-            db.add_video(vid, title, "youtube")
+
+            # Try to extract channel ID
+            channel_id = None
+            if video_id:
+                for url in urls:
+                    channel_id = downloader.extract_channel_id(url)
+                    if channel_id:
+                        break
+
+            # Create path-based ID if channel ID is available
+            if channel_id:
+                path_id = f"{channel_id}/{video_id}"
+                logging.info(f"Using path-based ID: {path_id}")
+            else:
+                path_id = video_id
+                logging.info(f"Using video ID directly: {path_id}")
+
+            db.add_video(path_id, title, "youtube")
         print(f"Ingested {len(entries)} videos")
         return
     # Local ingestion: directly register local file paths
@@ -133,12 +168,27 @@ def download_video(db, vid, video):
         file_path = Path(video["filepath"])
         logging.info(f"Using local file at {file_path}")
     else:
-        url = f"https://youtu.be/{vid}"
-        downloader = VideoDownloader(urls=[url], output_dir=DOWNLOAD_DIR)
-        logging.info(f"Downloading video {vid} from {url}")
-        downloader._run_download()
-        # find downloaded mp4
-        pattern = f"**/{vid}.mp4"
+        # Parse path-based ID if it contains a channel ID
+        if "/" in vid:
+            channel_id, video_id = vid.split("/", 1)
+            logging.info(f"Using path-based ID with channel {channel_id} and video {video_id}")
+            # Direct URL for the specific video
+            url = f"https://youtu.be/{video_id}"
+            # Set up downloader with channel ID path structure
+            downloader = VideoDownloader(urls=[url], output_dir=DOWNLOAD_DIR)
+            logging.info(f"Downloading video {video_id} from {url}")
+            downloader._run_download()
+            # Look for the downloaded mp4 in the channel's folder
+            pattern = f"**/{channel_id}/{video_id}.mp4"
+        else:
+            # Just a plain video ID
+            url = f"https://youtu.be/{vid}"
+            downloader = VideoDownloader(urls=[url], output_dir=DOWNLOAD_DIR)
+            logging.info(f"Downloading video {vid} from {url}")
+            downloader._run_download()
+            # Look for the downloaded mp4 anywhere
+            pattern = f"**/{vid}.mp4"
+
         try:
             file_path = next(DOWNLOAD_DIR.glob(pattern))
             logging.info(f"Download completed: {file_path}")
@@ -154,6 +204,33 @@ def transcribe_video(db, vid, file_path, transcriber):
     """
     Transcribe a video file and save the results to the database.
     """
+    # Check if a transcription file already exists
+    transcription_path = Path(file_path).with_name(
+        f"{Path(file_path).stem}_transcription.md"
+    )
+    if transcription_path.exists():
+        logging.info(f"Found existing transcription file at {transcription_path}")
+        db.update_video_status(vid, "transcribed")
+        logging.info(f"Video {vid} marked as transcribed (using existing file)")
+
+        # We still need to process the transcription to extract data
+        segments, analysis = transcriber.transcribe(file_path)
+
+        # Persist transcript segments
+        for start, end, text in segments:
+            db.save_subtitle(vid, int(start), int(end), text)
+
+        db.save_analysis(
+            vid,
+            analysis.get("summary", ""),
+            analysis.get("topics", []),
+            analysis.get("key_terms", []),
+            analysis.get("recommended_chapters", []),
+        )
+
+        return segments, analysis
+
+    # No existing transcription file, proceed with transcription
     db.update_video_status(vid, "transcribing")
     logging.info(f"Transcribing video {vid} from {file_path}")
 
@@ -171,8 +248,68 @@ def transcribe_video(db, vid, file_path, transcriber):
         analysis.get("recommended_chapters", []),
     )
 
+    # Update status to transcribed so it can be picked up by the ingest step
+    db.update_video_status(vid, "transcribed")
     logging.info(f"Transcription completed for video {vid}")
     return segments, analysis
+
+
+async def ingest_transcription(db, vid, transcription_path):
+    """
+    Ingest a transcription file into the Graphiti knowledge graph.
+
+    Args:
+        db: Database instance
+        vid: Video ID
+        transcription_path: Path to the transcription file
+    """
+    try:
+        logging.info(f"Ingesting transcription for video {vid} into Graphiti")
+        logging.info(f"Transcription file path: {transcription_path}")
+
+        # Check if the transcription file exists
+        if not Path(transcription_path).exists():
+            error_msg = f"Transcription file does not exist: {transcription_path}"
+            logging.error(error_msg)
+            db.update_video_status(vid, "failed", error_msg)
+            return False
+
+        # Initialize GraphitiManager
+        try:
+            graphiti = GraphitiManager()
+        except Exception as e:
+            error_msg = f"Failed to initialize GraphitiManager: {str(e)}"
+            logging.error(error_msg)
+            db.update_video_status(vid, "failed", error_msg)
+            return False
+
+        # Update status to ingesting
+        db.update_video_status(vid, "ingesting")
+
+        # Process and ingest the transcription
+        try:
+            success = await graphiti.ingest_transcription(transcription_path)
+        except Exception as e:
+            error_msg = f"Exception during graphiti.ingest_transcription: {str(e)}"
+            logging.error(error_msg)
+            db.update_video_status(vid, "failed", error_msg)
+            return False
+
+        if success:
+            db.update_video_status(vid, "done")
+            logging.info(f"Successfully ingested transcription for video {vid}")
+            return True
+        else:
+            error_msg = "Failed to ingest transcription into Graphiti"
+            db.update_video_status(vid, "failed", error_msg)
+            logging.error(error_msg)
+            return False
+
+    except Exception as e:
+        error_msg = f"Error ingesting transcription: {str(e)}"
+        logging.error(error_msg)
+        db.update_video_status(vid, "failed", error_msg)
+        return False
 
 
 def run_worker(args):
@@ -235,11 +372,87 @@ def run_worker(args):
                     error_msg = f"Video file not found at {file_path}"
                     logging.error(error_msg)
                     db.update_video_status(vid, "failed", error_msg)
-                    continue
+                    continue            # Ingest step for Graphiti
+            if step is None or step == "ingest":
+                # Initialize transcription_path to None
+                transcription_path = None
 
-            # Mark as done if we've completed all steps
-            db.update_video_status(vid, "done")
-            logging.info(f"Processed video {vid}")
+                # Look for the transcription file with _transcription.md suffix
+                if video["source"] == "local":
+                    base_path = Path(video["filepath"]).parent
+                    transcription_path = base_path / f"{vid}_transcription.md"
+                else:
+                    # For path-based IDs, parse out the components
+                    if "/" in vid:
+                        channel_id, video_id = vid.split("/", 1)
+                        # First try the channel specific folder
+                        expected_path = DOWNLOAD_DIR / channel_id / f"{video_id}_transcription.md"
+
+                        if expected_path.exists():
+                            logging.info(f"Found transcription in channel folder: {expected_path}")
+                            transcription_path = expected_path
+                        else:
+                            # Fall back to looking in base download dir with full path-ID
+                            fallback_path = DOWNLOAD_DIR / f"{vid}_transcription.md"
+
+                            if fallback_path.exists():
+                                logging.info(f"Found transcription in download dir with full ID: {fallback_path}")
+                                transcription_path = fallback_path
+                            else:
+                                # Try with just the video ID part
+                                video_only_path = DOWNLOAD_DIR / f"{video_id}_transcription.md"
+                                if video_only_path.exists():
+                                    logging.info(f"Found transcription with just video ID: {video_only_path}")
+                                    transcription_path = video_only_path
+                                else:
+                                    # Try all files in downloads folder as a last resort
+                                    for transcription_file in DOWNLOAD_DIR.glob("**/*_transcription.md"):
+                                        if video_id in str(transcription_file):
+                                            logging.info(f"Found transcription by searching: {transcription_file}")
+                                            transcription_path = transcription_file
+                                            break
+                    else:
+                        # Regular video ID - try direct match first
+                        direct_path = DOWNLOAD_DIR / f"{vid}_transcription.md"
+                        if direct_path.exists():
+                            transcription_path = direct_path
+                        else:
+                            # Try searching in all subfolders
+                            for transcription_file in DOWNLOAD_DIR.glob("**/*_transcription.md"):
+                                if vid in str(transcription_file):
+                                    logging.info(f"Found transcription by searching: {transcription_file}")
+                                    transcription_path = transcription_file
+                                    break
+
+                if transcription_path and transcription_path.exists():
+                    # Use asyncio to run the async ingest function
+                    logging.info(f"Using transcription file: {transcription_path}")
+                    try:
+                        await_result = asyncio.run(ingest_transcription(db, vid, transcription_path))
+                        if not await_result:
+                            # If ingest failed, log it but continue with full pipeline processing
+                            logging.warning(f"Ingestion failed for {vid} but continuing with pipeline")
+                            if step == "ingest":
+                                # If we're only running ingest step, don't continue to other videos
+                                continue
+                    except Exception as e:
+                        error_msg = f"Exception during ingest_transcription: {str(e)}"
+                        logging.error(error_msg)
+                        db.update_video_status(vid, "failed", error_msg)
+                        if step == "ingest":
+                            continue
+                else:
+                    error_msg = f"Transcription file not found at any expected location for video {vid}"
+                    logging.error(error_msg)
+                    if step == "ingest":
+                        db.update_video_status(vid, "failed", error_msg)
+                        continue
+
+            # Mark as done if we've completed all steps and we're running the full pipeline
+            if step is None:
+                db.update_video_status(vid, "done")
+                logging.info(f"Processed video {vid} (full pipeline)")
+            # If we're running a specific step, the status update has already been handled by that step
 
         except Exception as e:
             logging.exception(f"Error processing {vid}")
@@ -293,6 +506,10 @@ def retry(args):
         # Set to downloaded state to indicate ready for transcription
         db.update_video_status(vid, "downloaded", None)
         print(f"Video {vid} set to 'downloaded' state for transcription.")
+    elif step == "ingest":
+        # Set to transcribed state to indicate ready for ingestion into Graphiti
+        db.update_video_status(vid, "transcribed", None)
+        print(f"Video {vid} set to 'transcribed' state for ingestion into Graphiti.")
     else:
         # Default: reset to todo for full pipeline
         db.update_video_status(vid, "todo", None)
@@ -336,7 +553,7 @@ def main():
     run_parser.add_argument(
         "step",
         nargs="?",
-        choices=["download", "transcribe"],
+        choices=["download", "transcribe", "ingest"],
         help="Specific step to run (default: run full pipeline)",
     )
 
@@ -346,8 +563,8 @@ def main():
     rep.add_argument("video_id", help="ID of video to retry")
     rep.add_argument(
         "--step",
-        choices=["download", "transcribe"],
-        help="Specific step to retry (download or transcribe)",
+        choices=["download", "transcribe", "ingest"],
+        help="Specific step to retry (download or transcribe or ingest)",
     )
 
     sub.add_parser("errors", help="List all failed videos with errors")

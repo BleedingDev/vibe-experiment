@@ -1,0 +1,1 @@
+- [ ] When I try to run retry video that has "-" in its ID it fails, not even wrapping in quotes helps.

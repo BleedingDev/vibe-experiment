@@ -96,6 +96,9 @@ class Database:
         elif step == "download":
             # For download step, look for videos marked as todo
             status_filter = "status='todo'"
+        elif step == "ingest":
+            # For ingest step, look for videos that are already transcribed
+            status_filter = "status='transcribed'"
         else:
             # For full pipeline, look for any videos marked as todo
             status_filter = "status='todo'"

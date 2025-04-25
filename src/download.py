@@ -343,6 +343,43 @@ class VideoDownloader:
 
         return videos
 
+    def extract_channel_id(self, url: str) -> str | None:
+        """
+        Extract channel ID from a YouTube URL.
+        Returns the channel ID if available, None otherwise.
+        """
+        try:
+            logger.info(f"Extracting channel ID for: {url}")
+            opts = {
+                "ignoreerrors": True,
+                "quiet": True,
+                "extract_flat": True,
+                "skip_download": True,
+            }
+
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+
+                if not info:
+                    logger.warning(f"No info could be extracted from {url}")
+                    return None
+
+                # Try to extract channel ID from various fields
+                channel_id = None
+                if isinstance(info, dict):
+                    channel_id = info.get('channel_id') or info.get('uploader_id')
+
+                if channel_id and isinstance(channel_id, str):
+                    logger.info(f"Found channel ID: {channel_id}")
+                    return channel_id
+                else:
+                    logger.warning(f"Could not extract channel ID from {url}")
+                    return None
+
+        except Exception as e:
+            logger.error(f"Error extracting channel ID from {url}: {e}")
+            return None
+
 
 def check_ffmpeg() -> bool:
     """

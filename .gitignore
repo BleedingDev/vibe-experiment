@@ -3,6 +3,9 @@ memory-bank/
 .roomodes
 downloads
 __pycache__
+.env
 
 # Database files
 graph_memory.db*
+
+
