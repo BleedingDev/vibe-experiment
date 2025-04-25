@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(mess
 
 DOWNLOAD_DIR = Path("./downloads")
 
+
 # Configurable maximum retry attempts for failed videos
 def get_env_int(name: str, default: int, max_val: int = 16) -> int:
     """Retrieve integer from environment or return default, clamped to max_val."""
@@ -27,6 +28,7 @@ def get_env_int(name: str, default: int, max_val: int = 16) -> int:
     except ValueError:
         value = default
     return min(value, max_val)
+
 
 MAX_RETRIES = get_env_int("MAX_RETRIES", 1)
 
@@ -335,7 +337,12 @@ async def ingest_transcription(db, vid, transcription_path):
         return False
 
 
-async def worker(step: str, semaphore: asyncio.Semaphore, loop: asyncio.AbstractEventLoop, executor: ThreadPoolExecutor):
+async def worker(
+    step: str,
+    semaphore: asyncio.Semaphore,
+    loop: asyncio.AbstractEventLoop,
+    executor: ThreadPoolExecutor,
+):
     """Worker coroutine for pipeline step."""
     db = Database()
     while True:
@@ -348,23 +355,37 @@ async def worker(step: str, semaphore: asyncio.Semaphore, loop: asyncio.Abstract
             vid = video["id"]
             try:
                 if step == "download":
-                    file_path = await loop.run_in_executor(executor, download_video, db, vid, video)
+                    await loop.run_in_executor(
+                        executor, download_video, db, vid, video
+                    )
                     db.update_video_status(vid, "downloaded")
                     logging.info(f"Downloaded video {vid}, scheduling transcription")
                 elif step == "transcribe":
                     filepath = video.get("filepath")
                     if not filepath:
-                        logging.debug(f"No filepath for video {vid}, skipping transcription.")
+                        logging.debug(
+                            f"No filepath for video {vid}, skipping transcription."
+                        )
                         continue
                     logging.info(f"Starting transcription for video {vid}")
-                    await loop.run_in_executor(executor, transcribe_video, db, vid, Path(filepath), Transcriber())
+                    await loop.run_in_executor(
+                        executor,
+                        transcribe_video,
+                        db,
+                        vid,
+                        Path(filepath),
+                        Transcriber(),
+                    )
                     logging.info(f"Completed transcription for video {vid}")
                 elif step == "ingest":
-                    transcription_path = Path(video.get("filepath", "")).with_name(f"{vid}_transcription.md")
+                    transcription_path = Path(video.get("filepath", "")).with_name(
+                        f"{vid}_transcription.md"
+                    )
                     await ingest_transcription(db, vid, transcription_path)
             except Exception as e:
                 logging.error(f"Error in {step} worker for {vid}: {e}")
                 continue
+
 
 async def run_concurrent(args):
     """Run pipeline steps concurrently with bounded parallelism."""
@@ -374,14 +395,18 @@ async def run_concurrent(args):
     download_sem = asyncio.Semaphore(download_limit)
     transcribe_sem = asyncio.Semaphore(transcribe_limit)
     ingest_sem = asyncio.Semaphore(ingest_limit)
-    executor = ThreadPoolExecutor(max_workers=download_limit + transcribe_limit + ingest_limit)
+    executor = ThreadPoolExecutor(
+        max_workers=download_limit + transcribe_limit + ingest_limit
+    )
     loop = asyncio.get_event_loop()
     # Launch multiple workers per step equal to their configured limits
     tasks: list[asyncio.Task] = []
     for _ in range(download_limit):
         tasks.append(loop.create_task(worker("download", download_sem, loop, executor)))
     for _ in range(transcribe_limit):
-        tasks.append(loop.create_task(worker("transcribe", transcribe_sem, loop, executor)))
+        tasks.append(
+            loop.create_task(worker("transcribe", transcribe_sem, loop, executor))
+        )
     for _ in range(ingest_limit):
         tasks.append(loop.create_task(worker("ingest", ingest_sem, loop, executor)))
     try:
@@ -392,6 +417,7 @@ async def run_concurrent(args):
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         executor.shutdown(wait=False)
+
 
 def run_worker(args):
     """
@@ -674,10 +700,10 @@ async def search(args):
                 fact = None
 
                 # Try to extract the 'fact' field from different object types
-                if hasattr(result, 'fact'):
+                if hasattr(result, "fact"):
                     fact = result.fact
-                elif isinstance(result, dict) and 'fact' in result:
-                    fact = result['fact']
+                elif isinstance(result, dict) and "fact" in result:
+                    fact = result["fact"]
                 else:
                     # Try to extract fact from string representation
                     result_str = str(result)
@@ -694,10 +720,10 @@ async def search(args):
                 valid_time = None
 
                 # Extract source description
-                if hasattr(result, 'source_description'):
+                if hasattr(result, "source_description"):
                     source_desc = result.source_description
-                elif isinstance(result, dict) and 'source_description' in result:
-                    source_desc = result['source_description']
+                elif isinstance(result, dict) and "source_description" in result:
+                    source_desc = result["source_description"]
                 else:
                     # Try to extract from string representation
                     desc_match = re.search(r"source_description='([^']*)'", str(result))
@@ -708,11 +734,15 @@ async def search(args):
                     print(f"Source: {source_desc}")
 
                 # Try to get timestamps
-                if hasattr(result, 'valid_at') and result.valid_at:
+                if hasattr(result, "valid_at") and result.valid_at:
                     valid_time = result.valid_at
                     print(f"Valid at: {valid_time}")
-                elif isinstance(result, dict) and 'valid_at' in result and result['valid_at']:
-                    valid_time = result['valid_at']
+                elif (
+                    isinstance(result, dict)
+                    and "valid_at" in result
+                    and result["valid_at"]
+                ):
+                    valid_time = result["valid_at"]
                     print(f"Valid at: {valid_time}")
 
             except Exception as e:
@@ -723,34 +753,42 @@ async def search(args):
                 video_id = None
 
                 # Look for video ID in the source description
-                if source_desc and 'video' in source_desc.lower():
+                if source_desc and "video" in source_desc.lower():
                     parts = source_desc.split()
                     for part in parts:
-                        if 'video' not in part.lower():
+                        if "video" not in part.lower():
                             video_id = part
                             break
 
-                if video_id and video_id != 'video':
+                if video_id and video_id != "video":
                     # Clean up video ID
-                    if video_id.startswith('for'):
+                    if video_id.startswith("for"):
                         video_id = video_id[3:]
 
                     # Handle channel/video ID format
-                    if '/' in video_id:
-                        _, video_id = video_id.split('/', 1)
+                    if "/" in video_id:
+                        _, video_id = video_id.split("/", 1)
 
                     print(f"Video ID: {video_id}")
 
                     # Look for timestamp in fact text
                     if fact:
-                        timestamp_match = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", fact)
+                        timestamp_match = re.search(
+                            r"(\d{1,2}):(\d{2})(?::(\d{2}))?", fact
+                        )
                         if timestamp_match:
                             minutes = int(timestamp_match.group(1))
                             seconds = int(timestamp_match.group(2))
-                            hours = int(timestamp_match.group(3)) if timestamp_match.group(3) else 0
+                            hours = (
+                                int(timestamp_match.group(3))
+                                if timestamp_match.group(3)
+                                else 0
+                            )
                             timestamp_seconds = hours * 3600 + minutes * 60 + seconds
 
-                            print(f"YouTube link: https://youtu.be/{video_id}?t={timestamp_seconds}")
+                            print(
+                                f"YouTube link: https://youtu.be/{video_id}?t={timestamp_seconds}"
+                            )
                         else:
                             print(f"YouTube link: https://youtu.be/{video_id}")
             except Exception as e:

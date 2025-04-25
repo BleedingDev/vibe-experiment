@@ -4,7 +4,6 @@ SQLite database wrapper for persisting video ingestion pipeline state, subtitles
 
 import sqlite3
 import json
-import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
