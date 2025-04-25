@@ -220,7 +220,9 @@ def run_worker(args):
                     try:
                         file_path = next(DOWNLOAD_DIR.glob(pattern))
                     except StopIteration:
-                        error_msg = f"Video file not found for {vid}. Must download first."
+                        error_msg = (
+                            f"Video file not found for {vid}. Must download first."
+                        )
                         logging.error(error_msg)
                         db.update_video_status(vid, "failed", error_msg)
                         continue
@@ -335,7 +337,7 @@ def main():
         "step",
         nargs="?",
         choices=["download", "transcribe"],
-        help="Specific step to run (default: run full pipeline)"
+        help="Specific step to run (default: run full pipeline)",
     )
 
     sub.add_parser("status", help="Show pipeline status")
@@ -345,7 +347,7 @@ def main():
     rep.add_argument(
         "--step",
         choices=["download", "transcribe"],
-        help="Specific step to retry (download or transcribe)"
+        help="Specific step to retry (download or transcribe)",
     )
 
     sub.add_parser("errors", help="List all failed videos with errors")
