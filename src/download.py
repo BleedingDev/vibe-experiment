@@ -10,15 +10,13 @@ Uses modern Python features, proper error handling, and async operations.
 import argparse
 import asyncio
 import logging
-import os
-import sys
 import shutil
-import platform
+import sys
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union
+from typing import Any
 
 # You'll need to install yt-dlp: pip install yt-dlp
-import yt_dlp
+import yt_dlp  # type: ignore
 
 # Configure logging
 logging.basicConfig(
@@ -34,29 +32,16 @@ class VideoDownloader:
 
     def __init__(
         self,
-        urls: List[str],
+        urls: list[str],
         output_dir: Path,
         format: str = "best",
-        limit: Optional[int] = None,
+        limit: int | None = None,
         extract_audio: bool = False,
         extract_subs: bool = False,
-        playlist_items: Optional[str] = None,
-        cookies_file: Optional[Path] = None,
+        playlist_items: str | None = None,
+        cookies_file: Path | None = None,
         use_native_progress: bool = False,
     ):
-        """
-        Initialize the downloader with configuration options.
-
-        Args:
-            channel_url: URL of the YouTube channel
-            output_dir: Directory to save downloaded videos
-            format: Video format to download (default 'best')
-            limit: Maximum number of videos to download (None = no limit)
-            extract_audio: Whether to extract audio
-            extract_subs: Whether to extract subtitles
-            playlist_items: Comma-separated list of playlist items to download
-            cookies_file: Path to cookies file for authenticated access
-        """
         self.urls = urls
         self.output_dir = output_dir
         self.format = format
@@ -67,21 +52,29 @@ class VideoDownloader:
         self.cookies_file = cookies_file
         self.use_native_progress = use_native_progress
 
-    def _get_ydl_opts(self) -> Dict[str, Any]:
+    def _progress_hook(self, d: dict[str, Any]) -> None:
+        try:
+            # Catch any exception in the progress hook to prevent download interruption
+            pass
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+
+    def _get_ydl_opts(self) -> dict[str, Any]:
         """
         Configure yt-dlp options based on instance settings.
 
         Returns:
             Dictionary of options for yt-dlp
         """
-        # Base options that apply to all configurations
+        # Use yt-dlp template variables directly, do not slugify here!
+        output_template = str(self.output_dir / "%(channel_id)s/%(id)s.%(ext)s")
+
         ydl_opts = {
-            # Use format string that prefers already-merged formats
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" if self.format == "best" else self.format,
-            "outtmpl": str(self.output_dir / "%(uploader)s/%(title)s-%(id)s.%(ext)s"),
+            "outtmpl": output_template,
             "ignoreerrors": True,
             "nooverwrites": True,
-            "continue": True,  # Resume partially downloaded files
+            "continue": True,
             "writethumbnail": True,
             "embedthumbnail": True,
             "writeinfojson": True,
@@ -89,126 +82,36 @@ class VideoDownloader:
             "writeautomaticsub": self.extract_subs,
             "subtitleslangs": ["en"] if self.extract_subs else [],
             "playlistend": self.limit if self.limit else None,
-            "merge_output_format": "mp4",  # Force merging into mp4
-            "retries": 10,        # Retry up to 10 times
-            "fragment_retries": 10,  # Retry fragments up to 10 times
-            "skip_unavailable_fragments": True,  # Skip unavailable fragments
-            "buffer_size": 16*1024,  # Set buffer size to 16K
+            "merge_output_format": "mp4",
+            "retries": 10,
+            "fragment_retries": 10,
+            "skip_unavailable_fragments": True,
+            "buffer_size": 16 * 1024,
         }
 
-        # Choose progress display mode
-        if self.use_native_progress:
-            # Use yt-dlp's native progress display
-            ydl_opts.update({
-                "quiet": False,
-                "no_warnings": False,
-                "verbose": True,
-                "noprogress": False,
-                # Don't add our custom progress hook
-            })
-        else:
-            # Use our custom progress display
-            ydl_opts.update({
-                "progress_hooks": [self._progress_hook],
-                "no_warnings": False,
-                "verbose": False,  # Less verbose to avoid cluttering our output
-                "quiet": False,
-                "noprogress": False,
-                "no_color": True,  # Disable ANSI colors in the console
-            })
-
-        # Add post-processor args for optimizing MP4s for streaming
         ydl_opts["postprocessor_args"] = ["-movflags", "faststart"]
 
         if self.playlist_items:
             ydl_opts["playlist_items"] = self.playlist_items
 
-        # Initialize post-processors list
-        postprocessors = []
-
-        # Add video post-processors (always needed)
-        postprocessors.extend([
+        postprocessors = [
             {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"},
             {"key": "FFmpegMetadata"},
-        ])
-
-        # Add thumbnail embedding if supported for the format
+        ]
         if self.format.find("mp4") != -1 or self.extract_audio:
             postprocessors.append({"key": "EmbedThumbnail"})
-
-        # Add audio extraction post-processor if needed
         if self.extract_audio:
             postprocessors.insert(0, {
                 "key": "FFmpegExtractAudio",
                 "preferredcodec": "mp3",
                 "preferredquality": "192",
             })
-
-        # Update options with post-processors
         ydl_opts["postprocessors"] = postprocessors
 
         if self.cookies_file:
             ydl_opts["cookiefile"] = str(self.cookies_file)
 
         return ydl_opts
-
-    def _progress_hook(self, d: Dict[str, Any]) -> None:
-        """
-        Progress hook to track download progress.
-
-        Args:
-            d: Progress dictionary from yt-dlp
-        """
-        try:
-            if d["status"] == "finished":
-                logger.info(f"Downloaded: {d.get('filename', 'unknown file')}")
-                logger.info("Post-processing video (merging streams)...")
-            elif d["status"] == "downloading":
-                # Get filename (safely)
-                filename = d.get('filename', 'unknown')
-
-                # Handle downloaded bytes (safely)
-                downloaded_bytes = d.get("downloaded_bytes")
-                if downloaded_bytes is None:
-                    # Some downloads don't report bytes
-                    logger.info(f"Downloading: {filename} - progress information unavailable")
-                    return
-
-                # Get total bytes with fallback (safely)
-                total_bytes = d.get("total_bytes")
-                if total_bytes is None:
-                    total_bytes = d.get("total_bytes_estimate")
-
-                # Format the progress message based on available information
-                if total_bytes and total_bytes > 0:  # We have both values for percentage
-                    percent = (downloaded_bytes / total_bytes) * 100
-                    size_mb = total_bytes / 1048576
-                    msg = f"Downloading: {filename} - {percent:.1f}% of {size_mb:.1f}MB"
-                else:
-                    # Just show downloaded amount if total is unknown
-                    size_mb = downloaded_bytes / 1048576
-                    msg = f"Downloading: {filename} - {size_mb:.1f}MB downloaded (total size unknown)"
-
-                # Add speed if available
-                speed = d.get("speed")
-                if speed and speed > 0:
-                    msg += f" at {speed / 1024:.1f}KB/s"
-
-                # Add ETA if available
-                eta = d.get("eta")
-                if eta:
-                    msg += f" - ETA: {eta}s"
-
-                logger.info(msg)
-            elif d["status"] == "error":
-                logger.error(f"Error downloading: {d.get('filename', 'unknown')}: {d.get('error')}")
-                # Log full error details for debugging
-                if "error" in d:
-                    logger.debug(f"Error details: {d['error']}")
-        except Exception as e:
-            # Catch any exception in the progress hook to prevent download interruption
-            logger.error(f"Error in progress tracking (continuing download): {e}")
-            # Don't re-raise - we want downloads to continue even if progress reporting fails
 
     async def download(self) -> None:
         """Download all videos asynchronously."""
