@@ -144,4 +144,3 @@ Graphiti automatically reflects `VIDEO`, `CHUNK`, `TOPIC` nodes and their edges.
 ---
 ### Ready for feedback
 Let me know what still feels off or any section needing deeper detail before we freeze this PRD.
-
