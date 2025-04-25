@@ -57,7 +57,7 @@ class Transcriber:
         """
         Use `bunx offmute-advanced` CLI to perform transcription and analysis.
         """
-        cmd = ["bunx", "offmute-advanced", str(video_path), "-t", "budget", "--json"]
+        cmd = ["bunx", "offmute-advanced", str(video_path), "-t", "budget"]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         data = json.loads(result.stdout)
         # Build segments list

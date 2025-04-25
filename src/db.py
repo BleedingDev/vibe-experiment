@@ -4,6 +4,7 @@ SQLite database wrapper for persisting video ingestion pipeline state, subtitles
 
 import sqlite3
 import json
+import logging
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -79,10 +80,29 @@ class Database:
         )
         self.conn.commit()
 
-    def get_next_video(self):
+    def get_next_video(self, step=None):
+        """
+        Get the next video to process based on the pipeline step.
+
+        Args:
+            step: Optional pipeline step (e.g., 'download', 'transcribe'). If not provided,
+                 gets videos with 'todo' status for full pipeline processing.
+        """
         cur = self.conn.cursor()
+
+        if step == "transcribe":
+            # For transcription step, look for videos that are already downloaded
+            status_filter = "status='downloaded'"
+        elif step == "download":
+            # For download step, look for videos marked as todo
+            status_filter = "status='todo'"
+        else:
+            # For full pipeline, look for any videos marked as todo
+            status_filter = "status='todo'"
+
+        logging.info(f"Looking for videos matching: {status_filter}")
         row = cur.execute(
-            "SELECT * FROM videos WHERE status='todo' ORDER BY created_at LIMIT 1"
+            f"SELECT * FROM videos WHERE {status_filter} ORDER BY created_at LIMIT 1"
         ).fetchone()
         return dict(row) if row else None
 

@@ -59,10 +59,25 @@ python .\main.py ingest --local-paths ..\videos\video1.mp4 ..\videos\video2.mp4
 ```
 
 #### run
-Process queued videos (download, transcribe, analyze, save results):
+Run the pipeline, optionally specifying which step to execute:
+
 ```powershell
+# Run the full pipeline (download + transcribe)
 python .\main.py run
+
+# Only download the videos
+python .\main.py run download
+
+# Only transcribe already downloaded videos
+python .\main.py run transcribe
 ```
+
+The pipeline processing happens in these distinct steps:
+
+1. **download**: Downloads videos from YouTube or uses local files
+2. **transcribe**: Transcribes the audio and performs analysis
+
+When running a specific step, videos will be marked with intermediate statuses to allow for step-by-step processing.
 
 #### status
 Show current pipeline counts and recent failures:
@@ -71,9 +86,16 @@ python .\main.py status
 ```
 
 #### retry
-Reset a failed video back to `todo` by its ID:
+Reset a failed video for reprocessing, optionally specifying which step to retry:
 ```powershell
+# Reset a video to retry the full pipeline
 python .\main.py retry <VIDEO_ID>
+
+# Reset a video to retry just the download step
+python .\main.py retry <VIDEO_ID> --step download
+
+# Reset a video to retry just the transcription step
+python .\main.py retry <VIDEO_ID> --step transcribe
 ```
 
 #### errors
