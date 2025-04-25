@@ -35,27 +35,27 @@ python .\main.py <command> [options]
 
 ### Commands
 
-#### ingest
+#### prepare
 Ingest videos into the pipeline database:
 ```powershell
-python .\main.py ingest [--channel-url <CHANNEL_URL>] [--video-urls <URL1> <URL2> ...] [--local-paths <PATH1> <PATH2> ...] [--limit N]
+python .\main.py prepare [--channel-url <CHANNEL_URL>] [--video-urls <URL1> <URL2> ...] [--local-paths <PATH1> <PATH2> ...] [--limit N]
 ```
 Options:
-- `--channel-url`: YouTube channel or playlist URL to batch ingest.
+- `--channel-url`: YouTube channel or playlist URL to batch prepare.
 - `--video-urls`: One or more YouTube video URLs.
 - `--local-paths`: One or more local video file paths.
-- `--limit`: Maximum number of videos to ingest (only with `--channel-url`).
+- `--limit`: Maximum number of videos to prepare (only with `--channel-url`).
 
 Examples:
 ```powershell
 # Ingest first 5 videos from a playlist
-python .\main.py ingest --channel-url https://www.youtube.com/playlist?list=... --limit 5
+python .\main.py prepare --channel-url https://www.youtube.com/playlist?list=... --limit 5
 
 # Ingest specific YouTube URLs
-python .\main.py ingest --video-urls https://youtu.be/abc123 https://youtu.be/def456
+python .\main.py prepare --video-urls https://youtu.be/abc123 https://youtu.be/def456
 
 # Ingest local MP4 files
-python .\main.py ingest --local-paths ..\videos\video1.mp4 ..\videos\video2.mp4
+python .\main.py prepare --local-paths ..\videos\video1.mp4 ..\videos\video2.mp4
 ```
 
 #### run

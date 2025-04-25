@@ -19,7 +19,7 @@ DOWNLOAD_DIR = Path("./downloads")
 MAX_RETRIES = int(os.getenv("MAX_RETRIES", "1"))
 
 
-def ingest(args):
+def prepare(args):
     db = Database()
     # Remote ingestion: fetch metadata without downloading
     if args.channel_url or args.video_urls:
@@ -325,11 +325,11 @@ def main():
     )
     sub = parser.add_subparsers(dest="cmd")
 
-    ing = sub.add_parser("ingest", help="Ingest videos into pipeline")
+    ing = sub.add_parser("prepare", help="Prepare videos into pipeline")
     ing.add_argument("--channel-url", help="YouTube channel or playlist URL")
     ing.add_argument("--video-urls", nargs="+", help="List of YouTube video URLs")
     ing.add_argument("--local-paths", nargs="+", help="List of local video file paths")
-    ing.add_argument("--limit", type=int, help="Limit number of videos to ingest")
+    ing.add_argument("--limit", type=int, help="Limit number of videos to prepare")
 
     # Run command with optional step parameter
     run_parser = sub.add_parser("run", help="Run pipeline worker")
@@ -353,8 +353,8 @@ def main():
     sub.add_parser("errors", help="List all failed videos with errors")
 
     args = parser.parse_args()
-    if args.cmd == "ingest":
-        ingest(args)
+    if args.cmd == "prepare":
+        prepare(args)
     elif args.cmd == "run":
         run_worker(args)
     elif args.cmd == "status":

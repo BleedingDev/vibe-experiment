@@ -69,7 +69,7 @@ class Database:
             ON CONFLICT(id) DO UPDATE SET
                 title=excluded.title,
                 source=excluded.source,
-                status='todo',  -- Reset status on re-ingest
+                status='todo',  -- Reset status on re-prepare
                 filepath=excluded.filepath,
                 duration_sec=excluded.duration_sec,
                 updated_at=excluded.updated_at,
