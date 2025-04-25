@@ -367,7 +367,7 @@ class VideoDownloader:
                 # Try to extract channel ID from various fields
                 channel_id = None
                 if isinstance(info, dict):
-                    channel_id = info.get('channel_id') or info.get('uploader_id')
+                    channel_id = info.get("channel_id") or info.get("uploader_id")
 
                 if channel_id and isinstance(channel_id, str):
                     logger.info(f"Found channel ID: {channel_id}")

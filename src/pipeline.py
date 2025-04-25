@@ -171,7 +171,9 @@ def download_video(db, vid, video):
         # Parse path-based ID if it contains a channel ID
         if "/" in vid:
             channel_id, video_id = vid.split("/", 1)
-            logging.info(f"Using path-based ID with channel {channel_id} and video {video_id}")
+            logging.info(
+                f"Using path-based ID with channel {channel_id} and video {video_id}"
+            )
             # Direct URL for the specific video
             url = f"https://youtu.be/{video_id}"
             # Set up downloader with channel ID path structure
@@ -277,6 +279,13 @@ async def ingest_transcription(db, vid, transcription_path):
         # Initialize GraphitiManager
         try:
             graphiti = GraphitiManager()
+
+            schema_initialized = await graphiti.initialize_schema()
+            if not schema_initialized:
+                error_msg = "Failed to initialize Neo4j schema"
+                logging.error(error_msg)
+                db.update_video_status(vid, "failed", error_msg)
+                return False
         except Exception as e:
             error_msg = f"Failed to initialize GraphitiManager: {str(e)}"
             logging.error(error_msg)
@@ -372,7 +381,7 @@ def run_worker(args):
                     error_msg = f"Video file not found at {file_path}"
                     logging.error(error_msg)
                     db.update_video_status(vid, "failed", error_msg)
-                    continue            # Ingest step for Graphiti
+                    continue  # Ingest step for Graphiti
             if step is None or step == "ingest":
                 # Initialize transcription_path to None
                 transcription_path = None
@@ -386,29 +395,43 @@ def run_worker(args):
                     if "/" in vid:
                         channel_id, video_id = vid.split("/", 1)
                         # First try the channel specific folder
-                        expected_path = DOWNLOAD_DIR / channel_id / f"{video_id}_transcription.md"
+                        expected_path = (
+                            DOWNLOAD_DIR / channel_id / f"{video_id}_transcription.md"
+                        )
 
                         if expected_path.exists():
-                            logging.info(f"Found transcription in channel folder: {expected_path}")
+                            logging.info(
+                                f"Found transcription in channel folder: {expected_path}"
+                            )
                             transcription_path = expected_path
                         else:
                             # Fall back to looking in base download dir with full path-ID
                             fallback_path = DOWNLOAD_DIR / f"{vid}_transcription.md"
 
                             if fallback_path.exists():
-                                logging.info(f"Found transcription in download dir with full ID: {fallback_path}")
+                                logging.info(
+                                    f"Found transcription in download dir with full ID: {fallback_path}"
+                                )
                                 transcription_path = fallback_path
                             else:
                                 # Try with just the video ID part
-                                video_only_path = DOWNLOAD_DIR / f"{video_id}_transcription.md"
+                                video_only_path = (
+                                    DOWNLOAD_DIR / f"{video_id}_transcription.md"
+                                )
                                 if video_only_path.exists():
-                                    logging.info(f"Found transcription with just video ID: {video_only_path}")
+                                    logging.info(
+                                        f"Found transcription with just video ID: {video_only_path}"
+                                    )
                                     transcription_path = video_only_path
                                 else:
                                     # Try all files in downloads folder as a last resort
-                                    for transcription_file in DOWNLOAD_DIR.glob("**/*_transcription.md"):
+                                    for transcription_file in DOWNLOAD_DIR.glob(
+                                        "**/*_transcription.md"
+                                    ):
                                         if video_id in str(transcription_file):
-                                            logging.info(f"Found transcription by searching: {transcription_file}")
+                                            logging.info(
+                                                f"Found transcription by searching: {transcription_file}"
+                                            )
                                             transcription_path = transcription_file
                                             break
                     else:
@@ -418,9 +441,13 @@ def run_worker(args):
                             transcription_path = direct_path
                         else:
                             # Try searching in all subfolders
-                            for transcription_file in DOWNLOAD_DIR.glob("**/*_transcription.md"):
+                            for transcription_file in DOWNLOAD_DIR.glob(
+                                "**/*_transcription.md"
+                            ):
                                 if vid in str(transcription_file):
-                                    logging.info(f"Found transcription by searching: {transcription_file}")
+                                    logging.info(
+                                        f"Found transcription by searching: {transcription_file}"
+                                    )
                                     transcription_path = transcription_file
                                     break
 
@@ -428,10 +455,14 @@ def run_worker(args):
                     # Use asyncio to run the async ingest function
                     logging.info(f"Using transcription file: {transcription_path}")
                     try:
-                        await_result = asyncio.run(ingest_transcription(db, vid, transcription_path))
+                        await_result = asyncio.run(
+                            ingest_transcription(db, vid, transcription_path)
+                        )
                         if not await_result:
                             # If ingest failed, log it but continue with full pipeline processing
-                            logging.warning(f"Ingestion failed for {vid} but continuing with pipeline")
+                            logging.warning(
+                                f"Ingestion failed for {vid} but continuing with pipeline"
+                            )
                             if step == "ingest":
                                 # If we're only running ingest step, don't continue to other videos
                                 continue

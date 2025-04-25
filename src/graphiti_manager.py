@@ -78,6 +78,19 @@ class GraphitiManager:
             logger.error(f"Failed to initialize Graphiti client: {str(e)}")
             raise
 
+    async def initialize_schema(self):
+        """Initialize the Neo4j database schema required by Graphiti"""
+        logger.info("Initializing Neo4j schema for Graphiti...")
+        try:
+            await self.graphiti.build_indices_and_constraints()
+            logger.info("Schema initialized using Graphiti's built-in method")
+
+            logger.info("Neo4j schema initialized manually")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize schema: {str(e)}")
+            return False
+
     async def ingest_transcription(self, transcription_path: Path) -> bool:
         """
         Process a transcription file and ingest it into Graphiti.
@@ -104,7 +117,11 @@ class GraphitiManager:
             parent_folder = Path(transcription_path).parent.name
             downloads_folder = Path(transcription_path).parent.parent.name
 
-            if parent_folder and parent_folder != "downloads" and downloads_folder == "downloads":
+            if (
+                parent_folder
+                and parent_folder != "downloads"
+                and downloads_folder == "downloads"
+            ):
                 # This is likely a channel ID folder, use it as part of the ID
                 video_id = f"{parent_folder}/{raw_video_id}"
                 logger.info(f"Using path-based video ID: {video_id}")
@@ -127,11 +144,15 @@ class GraphitiManager:
                     logger.info(f"Successfully read file with {encoding} encoding")
                     break
                 except UnicodeDecodeError:
-                    logger.warning(f"Failed to read with {encoding} encoding, trying next...")
+                    logger.warning(
+                        f"Failed to read with {encoding} encoding, trying next..."
+                    )
                     continue
 
             if content is None:
-                logger.error(f"Could not read file with any encoding: {transcription_path}")
+                logger.error(
+                    f"Could not read file with any encoding: {transcription_path}"
+                )
                 return False
 
             if not content.strip():
@@ -157,7 +178,9 @@ class GraphitiManager:
             except Exception as e:
                 logger.error(f"Failed to add analysis episode: {str(e)}")
                 # Continue with transcript chunks even if analysis fails
-                logger.warning("Continuing with transcript chunks despite analysis error")
+                logger.warning(
+                    "Continuing with transcript chunks despite analysis error"
+                )
 
             # Keep track of successful chunks
             success_count = 0
@@ -166,13 +189,14 @@ class GraphitiManager:
             # Process transcript chunks with batch error handling
             for i, chunk in enumerate(chunks):
                 try:
-                    logger.info(f"Processing chunk {i+1}/{total_chunks}")
+                    logger.info(f"Processing chunk {i + 1}/{total_chunks}")
                     await self._add_transcript_chunk_episode(video_id, chunk, i)
                     success_count += 1
                     # Add a small delay between chunks to avoid overwhelming Neo4j
                     # Only delay if there are many chunks
                     if total_chunks > 10:
                         from asyncio import sleep
+
                         await sleep(0.1)  # 100ms delay
                 except Exception as e:
                     logger.error(f"Error processing chunk {i}: {str(e)}")
@@ -183,10 +207,14 @@ class GraphitiManager:
             # 1. We processed at least one chunk, or
             # 2. We successfully added the analysis episode
             if success_count > 0:
-                logger.info(f"Successfully ingested {success_count}/{total_chunks} transcript chunks for video {video_id}")
+                logger.info(
+                    f"Successfully ingested {success_count}/{total_chunks} transcript chunks for video {video_id}"
+                )
                 return True
             elif not chunks and audio_analysis:
-                logger.info(f"No transcript chunks but successfully added analysis for video {video_id}")
+                logger.info(
+                    f"No transcript chunks but successfully added analysis for video {video_id}"
+                )
                 return True
             else:
                 logger.error(f"Failed to ingest any content for video {video_id}")
@@ -208,7 +236,7 @@ class GraphitiManager:
             Tuple containing (audio_analysis, full_transcript)
         """
         # Log the content structure for debugging
-        content_preview = content[:100].replace('\n', ' ')
+        content_preview = content[:100].replace("\n", " ")
         logger.info(f"Content preview: '{content_preview}...'")
         logger.info(f"Content length: {len(content)}")
 
@@ -219,47 +247,73 @@ class GraphitiManager:
             pos = content.find(header)
             if pos != -1:
                 audio_analysis_start = pos
-                logger.info(f"Found Audio Analysis section at position {pos} with header '{header}'")
+                logger.info(
+                    f"Found Audio Analysis section at position {pos} with header '{header}'"
+                )
                 break
 
         # Full Transcription section
         full_transcript_start = -1
-        for header in ["# Full Transcription", "Full Transcription:", "TRANSCRIPT", "# Transcript"]:
+        for header in [
+            "# Full Transcription",
+            "Full Transcription:",
+            "TRANSCRIPT",
+            "# Transcript",
+        ]:
             pos = content.find(header)
             if pos != -1:
                 full_transcript_start = pos
-                logger.info(f"Found Full Transcription section at position {pos} with header '{header}'")
+                logger.info(
+                    f"Found Full Transcription section at position {pos} with header '{header}'"
+                )
                 break
 
         # If Audio Analysis exists, extract it
         audio_analysis = ""
         if audio_analysis_start != -1:
             # If Full Transcription exists and comes after the Audio Analysis, use it as boundary
-            if full_transcript_start != -1 and full_transcript_start > audio_analysis_start:
-                audio_analysis = content[audio_analysis_start:full_transcript_start].strip()
-                logger.info(f"Extracted Audio Analysis from positions {audio_analysis_start} to {full_transcript_start}")
+            if (
+                full_transcript_start != -1
+                and full_transcript_start > audio_analysis_start
+            ):
+                audio_analysis = content[
+                    audio_analysis_start:full_transcript_start
+                ].strip()
+                logger.info(
+                    f"Extracted Audio Analysis from positions {audio_analysis_start} to {full_transcript_start}"
+                )
             else:
                 # Try to find the next section header after Audio Analysis
                 next_header_pos = content.find("#", audio_analysis_start + 1)
 
                 if next_header_pos != -1:
                     # Found another header, use it as boundary
-                    audio_analysis = content[audio_analysis_start:next_header_pos].strip()
-                    logger.info(f"Extracted Audio Analysis up to next header at position {next_header_pos}")
+                    audio_analysis = content[
+                        audio_analysis_start:next_header_pos
+                    ].strip()
+                    logger.info(
+                        f"Extracted Audio Analysis up to next header at position {next_header_pos}"
+                    )
                 else:
                     # No other headers found, use everything from Audio Analysis to the end
                     audio_analysis = content[audio_analysis_start:].strip()
-                    logger.info("Extracted Audio Analysis to end of content (no other headers found)")
+                    logger.info(
+                        "Extracted Audio Analysis to end of content (no other headers found)"
+                    )
 
         # Extract Full Transcription if it exists
         full_transcript = ""
         if full_transcript_start != -1:
             full_transcript = content[full_transcript_start:].strip()
-            logger.info(f"Extracted Full Transcription from position {full_transcript_start} to end")
+            logger.info(
+                f"Extracted Full Transcription from position {full_transcript_start} to end"
+            )
 
         # If no sections were found, use the entire content as transcript
         if not audio_analysis and not full_transcript:
-            logger.warning("No standard sections found in transcription file, using entire content")
+            logger.warning(
+                "No standard sections found in transcription file, using entire content"
+            )
             full_transcript = content.strip()
 
         return audio_analysis, full_transcript
@@ -284,11 +338,7 @@ class GraphitiManager:
         cleaned_transcript = transcript
 
         # Remove common headers
-        headers_to_remove = [
-            "# Full Transcription",
-            "# Transcript",
-            "# Content"
-        ]
+        headers_to_remove = ["# Full Transcription", "# Transcript", "# Content"]
         for header in headers_to_remove:
             cleaned_transcript = cleaned_transcript.replace(header, "").strip()
 
@@ -300,11 +350,12 @@ class GraphitiManager:
             # Try other common delimiters for chunking
             # First check if there are timestamps in [00:00:00] format
             import re
-            timestamp_matches = re.findall(r'\[\d{2}:\d{2}:\d{2}\]', cleaned_transcript)
+
+            timestamp_matches = re.findall(r"\[\d{2}:\d{2}:\d{2}\]", cleaned_transcript)
 
             if timestamp_matches:
                 # Use timestamps as chunk boundaries
-                parts = re.split(r'(\[\d{2}:\d{2}:\d{2}\])', cleaned_transcript)
+                parts = re.split(r"(\[\d{2}:\d{2}:\d{2}\])", cleaned_transcript)
             else:
                 # Fall back to paragraph-based chunking
                 parts = cleaned_transcript.split("\n\n")
@@ -341,8 +392,10 @@ class GraphitiManager:
         # If we ended up with no chunks, create at least one from the cleaned transcript
         if not chunks and cleaned_transcript.strip():
             # Fallback: just split by character count if all else fails
-            chunks = [cleaned_transcript[i:i+chunk_size].strip()
-                     for i in range(0, len(cleaned_transcript), chunk_size)]
+            chunks = [
+                cleaned_transcript[i : i + chunk_size].strip()
+                for i in range(0, len(cleaned_transcript), chunk_size)
+            ]
 
         logger.info(f"Created {len(chunks)} transcript chunks")
         return chunks
@@ -363,11 +416,7 @@ class GraphitiManager:
         try:
             # Clean up the analysis text
             # Remove all known headers that might be present
-            headers = [
-                "# Audio Analysis",
-                "Audio Analysis:",
-                "AUDIO ANALYSIS"
-            ]
+            headers = ["# Audio Analysis", "Audio Analysis:", "AUDIO ANALYSIS"]
 
             clean_text = analysis_text
             for header in headers:
@@ -375,26 +424,29 @@ class GraphitiManager:
 
             # Ensure we still have content after cleaning
             if not clean_text or len(clean_text) < 10:
-                logger.warning(f"No meaningful content in audio analysis for video {video_id} after cleaning")
+                logger.warning(
+                    f"No meaningful content in audio analysis for video {video_id} after cleaning"
+                )
                 # Use a placeholder summary if the analysis is empty or too short
                 clean_text = f"Transcription summary for video {video_id} (no analysis available)"
 
             # Clean any problematic characters from the text
             # Replace smart quotes and other problematic characters
             replacements = {
-                '"': '"',  # opening double quote
                 '"': '"',  # closing double quote
-                ''': "'",  # opening single quote
-                ''': "'",  # closing single quote
-                '–': '-',  # en dash
-                '—': '-'   # em dash
+                """: "'",  # opening single quote
+                """: "'",  # closing single quote
+                "–": "-",  # en dash
+                "—": "-",  # em dash
             }
             for old, new in replacements.items():
                 clean_text = clean_text.replace(old, new)
 
             # Limit the length if needed (Neo4j can have issues with very long texts)
             if len(clean_text) > 10000:
-                logger.warning(f"Audio analysis for video {video_id} is very long, truncating")
+                logger.warning(
+                    f"Audio analysis for video {video_id} is very long, truncating"
+                )
                 clean_text = clean_text[:10000] + "... (truncated)"
 
             # Make video_id safe for Neo4j (remove slashes)
@@ -430,7 +482,9 @@ class GraphitiManager:
             logger.error(f"Analysis text length: {len(analysis_text)}")
             # Continue without raising so other chunks can be processed
             # This prevents one error from stopping the entire ingestion
-            logger.warning("Continuing with transcript chunks despite audio analysis error")
+            logger.warning(
+                "Continuing with transcript chunks despite audio analysis error"
+            )
 
     async def _add_transcript_chunk_episode(
         self, video_id: str, chunk: str, chunk_index: int
@@ -445,8 +499,12 @@ class GraphitiManager:
         """
         try:
             # Skip empty chunks
-            if not chunk or len(chunk.strip()) < 10:  # Require at least 10 chars of content
-                logger.warning(f"Skipping empty or very small chunk {chunk_index} for video {video_id}")
+            if (
+                not chunk or len(chunk.strip()) < 10
+            ):  # Require at least 10 chars of content
+                logger.warning(
+                    f"Skipping empty or very small chunk {chunk_index} for video {video_id}"
+                )
                 return
 
             # Clean up the chunk
@@ -454,19 +512,21 @@ class GraphitiManager:
 
             # Clean any problematic characters from the text
             replacements = {
-                '\u201c': '"',  # left double quotation mark
-                '\u201d': '"',  # right double quotation mark
-                '\u2018': "'",  # left single quotation mark
-                '\u2019': "'",  # right single quotation mark
-                '\u2013': '-',  # en dash
-                '\u2014': '-'   # em dash
+                "\u201c": '"',  # left double quotation mark
+                "\u201d": '"',  # right double quotation mark
+                "\u2018": "'",  # left single quotation mark
+                "\u2019": "'",  # right single quotation mark
+                "\u2013": "-",  # en dash
+                "\u2014": "-",  # em dash
             }
             for old, new in replacements.items():
                 clean_chunk = clean_chunk.replace(old, new)
 
             # Ensure the chunk isn't too long for Neo4j
             if len(clean_chunk) > 10000:
-                logger.warning(f"Transcript chunk {chunk_index} for video {video_id} is very long, truncating")
+                logger.warning(
+                    f"Transcript chunk {chunk_index} for video {video_id} is very long, truncating"
+                )
                 clean_chunk = clean_chunk[:10000] + "... (truncated)"
 
             # Create safe_video_id by removing potential problematic characters
@@ -482,12 +542,16 @@ class GraphitiManager:
                     reference_time=datetime.now(timezone.utc),
                     source_description=f"Transcript chunk {chunk_index} for video {video_id}",
                 )
-                logger.info(f"Added transcript chunk {chunk_index} for video {video_id}")
+                logger.info(
+                    f"Added transcript chunk {chunk_index} for video {video_id}"
+                )
             except Exception as e:
                 logger.error(f"Error adding chunk {chunk_index}: {str(e)}")
                 # If the chunk is still problematic, try with minimal content
                 try:
-                    minimal_chunk = f"Transcript chunk {chunk_index} for video {video_id}"
+                    minimal_chunk = (
+                        f"Transcript chunk {chunk_index} for video {video_id}"
+                    )
                     await self.graphiti.add_episode(
                         name=f"Transcript_{safe_video_id}_chunk_{chunk_index}",
                         episode_body=minimal_chunk,
@@ -495,7 +559,9 @@ class GraphitiManager:
                         reference_time=datetime.now(timezone.utc),
                         source_description=f"Transcript chunk {chunk_index} for video {video_id} (error recovery)",
                     )
-                    logger.info(f"Added minimal chunk {chunk_index} after error recovery")
+                    logger.info(
+                        f"Added minimal chunk {chunk_index} after error recovery"
+                    )
                 except Exception as e2:
                     logger.error(f"Even minimal chunk failed: {str(e2)}")
                     # Skip this chunk and continue
