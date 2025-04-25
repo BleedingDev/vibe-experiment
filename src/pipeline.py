@@ -1,6 +1,7 @@
 import argparse
 import logging
 import asyncio
+import re
 from pathlib import Path
 import os
 import subprocess
@@ -598,87 +599,91 @@ async def search(args):
             print(f"\n--- Result {i + 1} ---")
 
             try:
-                # Try to access attributes of EntityEdge objects directly
-                if hasattr(result, "edge_content"):
-                    print(f"Content: {result.edge_content}")
-                elif hasattr(result, "episode_body"):
-                    print(f"Content: {result.episode_body}")
-                elif isinstance(result, dict):
-                    # Try dictionary style access if it's a dict
-                    fact = result.get(
-                        "fact", result.get("content", "No content available")
-                    )
-                    print(f"Content: {fact}")
-                else:
-                    # Fallback: just print the string representation
-                    print(f"Content: {str(result)}")
+                # Extract the fact content (most important information)
+                fact = None
 
-                # Try to get source description if available
+                # Try to extract the 'fact' field from different object types
+                if hasattr(result, 'fact'):
+                    fact = result.fact
+                elif isinstance(result, dict) and 'fact' in result:
+                    fact = result['fact']
+                else:
+                    # Try to extract fact from string representation
+                    result_str = str(result)
+                    fact_match = re.search(r"fact='([^']*)'", result_str)
+                    if fact_match:
+                        fact = fact_match.group(1)
+                    else:
+                        fact = "No readable content found"
+
+                print(f"Content: {fact}")
+
+                # Try to get additional metadata
                 source_desc = None
-                if hasattr(result, "source_description"):
+                valid_time = None
+
+                # Extract source description
+                if hasattr(result, 'source_description'):
                     source_desc = result.source_description
-                elif isinstance(result, dict):
-                    source_desc = result.get("source_description")
+                elif isinstance(result, dict) and 'source_description' in result:
+                    source_desc = result['source_description']
+                else:
+                    # Try to extract from string representation
+                    desc_match = re.search(r"source_description='([^']*)'", str(result))
+                    if desc_match:
+                        source_desc = desc_match.group(1)
 
                 if source_desc:
                     print(f"Source: {source_desc}")
 
+                # Try to get timestamps
+                if hasattr(result, 'valid_at') and result.valid_at:
+                    valid_time = result.valid_at
+                    print(f"Valid at: {valid_time}")
+                elif isinstance(result, dict) and 'valid_at' in result and result['valid_at']:
+                    valid_time = result['valid_at']
+                    print(f"Valid at: {valid_time}")
+
             except Exception as e:
-                print(f"Error processing search result: {str(e)}")
+                print(f"Error extracting content from search result: {str(e)}")
 
-            # If there's a video ID, format a clickable link with timestamp if available
-            video_id = None
-
-            # Try to extract video ID and timestamp from the result metadata
+            # Try to extract video ID if present in the result
             try:
-                if isinstance(result, dict) and "source_description" in result:
-                    desc = result["source_description"]
-                    if "video" in desc.lower():
-                        parts = desc.split()
-                        for part in parts:
-                            if "video" not in part.lower():
-                                video_id = part
-                                break
-                elif (
-                    hasattr(result, "source_description") and result.source_description
-                ):
-                    desc = result.source_description
-                    if "video" in desc.lower():
-                        parts = desc.split()
-                        for part in parts:
-                            if "video" not in part.lower():
-                                video_id = part
-                                break
+                video_id = None
+
+                # Look for video ID in the source description
+                if source_desc and 'video' in source_desc.lower():
+                    parts = source_desc.split()
+                    for part in parts:
+                        if 'video' not in part.lower():
+                            video_id = part
+                            break
+
+                if video_id and video_id != 'video':
+                    # Clean up video ID
+                    if video_id.startswith('for'):
+                        video_id = video_id[3:]
+
+                    # Handle channel/video ID format
+                    if '/' in video_id:
+                        _, video_id = video_id.split('/', 1)
+
+                    print(f"Video ID: {video_id}")
+
+                    # Look for timestamp in fact text
+                    if fact:
+                        timestamp_match = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", fact)
+                        if timestamp_match:
+                            minutes = int(timestamp_match.group(1))
+                            seconds = int(timestamp_match.group(2))
+                            hours = int(timestamp_match.group(3)) if timestamp_match.group(3) else 0
+                            timestamp_seconds = hours * 3600 + minutes * 60 + seconds
+
+                            print(f"YouTube link: https://youtu.be/{video_id}?t={timestamp_seconds}")
+                        else:
+                            print(f"YouTube link: https://youtu.be/{video_id}")
             except Exception as e:
-                print(f"Error extracting video ID: {str(e)}")
-
-            # If we have a video ID, try to create a YouTube link
-            if video_id and video_id != "video":
-                # Remove any "for" prefix if present
-                if video_id.startswith("for"):
-                    video_id = video_id[3:]
-
-                # Handle path-based IDs (channel_id/video_id format)
-                if "/" in video_id:
-                    _, video_id = video_id.split("/", 1)
-
-                print(f"Video ID: {video_id}")
-
-                # Check if there's timestamp info in the fact or metadata
-                import re
-
-                timestamp_match = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", fact)
-                if timestamp_match:
-                    minutes = int(timestamp_match.group(1))
-                    seconds = int(timestamp_match.group(2))
-                    hours = (
-                        int(timestamp_match.group(3)) if timestamp_match.group(3) else 0
-                    )
-                    timestamp_seconds = hours * 3600 + minutes * 60 + seconds
-
-                    print(
-                        f"YouTube link: https://youtu.be/{video_id}?t={timestamp_seconds}"
-                    )
+                print(f"Error processing video metadata: {str(e)}")
 
     except Exception as e:
         print(f"Error searching graph: {str(e)}")
