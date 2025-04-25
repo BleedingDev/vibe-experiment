@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Tuple, Dict, Any, List
 
 from dotenv import load_dotenv
-from deepgram import DeepgramClient
+from deepgram import DeepgramClient, FileSource, PrerecordedOptions
 
 # Load environment variables
 load_dotenv()

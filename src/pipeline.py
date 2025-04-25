@@ -187,7 +187,7 @@ def run_worker(args):
     if step:
         logging.info(f"Running pipeline step: {step}")
     else:
-        logging.info(f"Running full pipeline")
+        logging.info("Running full pipeline")
 
     while True:
         # Get next video based on the current step
