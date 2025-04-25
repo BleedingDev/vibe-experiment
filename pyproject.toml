@@ -8,6 +8,8 @@ dependencies = [
     "graphiti-core>=0.10.5",
     "pydantic[email,timezone]>=2.11.3",
     "yt-dlp>=2025.3.31",
+    "python-dotenv>=0.21.0",
+    "deepgram-sdk==3.*",
 ]
 
 [dependency-groups]

@@ -70,7 +70,9 @@ class VideoDownloader:
         output_template = str(self.output_dir / "%(channel_id)s/%(id)s.%(ext)s")
 
         ydl_opts = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" if self.format == "best" else self.format,
+            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+            if self.format == "best"
+            else self.format,
             "outtmpl": output_template,
             "ignoreerrors": True,
             "nooverwrites": True,
@@ -97,16 +99,20 @@ class VideoDownloader:
         # Set up postprocessors based on options
         postprocessors = []
         if self.extract_audio:
-            postprocessors.append({
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            })
+            postprocessors.append(
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }
+            )
             postprocessors.append({"key": "FFmpegMetadata"})
             # Optionally embed thumbnail for mp3
             postprocessors.append({"key": "EmbedThumbnail"})
         else:
-            postprocessors.append({"key": "FFmpegVideoConvertor", "preferedformat": "mp4"})
+            postprocessors.append(
+                {"key": "FFmpegVideoConvertor", "preferedformat": "mp4"}
+            )
             postprocessors.append({"key": "FFmpegMetadata"})
             postprocessors.append({"key": "EmbedThumbnail"})
         ydl_opts["postprocessors"] = postprocessors
@@ -131,7 +137,9 @@ class VideoDownloader:
             # Check for .part files in the output directory
             part_files = list(self.output_dir.glob("**/*.part"))
             if part_files:
-                logger.info(f"Found {len(part_files)} partial downloads that will be resumed")
+                logger.info(
+                    f"Found {len(part_files)} partial downloads that will be resumed"
+                )
 
             # Create a separate thread for yt-dlp since it's blocking
             loop = asyncio.get_event_loop()
@@ -182,24 +190,32 @@ class VideoDownloader:
                             continue
 
                         # Determine if this is a playlist/channel or single video
-                        if 'entries' in info_dict:
+                        if "entries" in info_dict:
                             # This is a playlist or channel
-                            videos = list(info_dict['entries'])
+                            videos = list(info_dict["entries"])
                             video_count = len(videos)
-                            channel_name = info_dict.get('channel', info_dict.get('uploader', 'Unknown Channel'))
-                            logger.info(f"Found playlist/channel: {channel_name} with {video_count} videos")
+                            channel_name = info_dict.get(
+                                "channel", info_dict.get("uploader", "Unknown Channel")
+                            )
+                            logger.info(
+                                f"Found playlist/channel: {channel_name} with {video_count} videos"
+                            )
                             total_videos += video_count
                             playlists.append(url)
                         else:
                             # This is a single video
-                            logger.info(f"Found video: {info_dict.get('title', 'Unknown')}")
+                            logger.info(
+                                f"Found video: {info_dict.get('title', 'Unknown')}"
+                            )
                             total_videos += 1
                             single_videos.append(url)
                     except Exception as e:
                         logger.error(f"Error extracting info for {url}: {e}")
 
                 if self.limit and total_videos > self.limit:
-                    logger.info(f"Will download up to {self.limit} videos due to specified limit")
+                    logger.info(
+                        f"Will download up to {self.limit} videos due to specified limit"
+                    )
 
                 # Now actually download
                 logger.info(f"Starting download of {total_videos} videos...")
@@ -208,9 +224,124 @@ class VideoDownloader:
         except yt_dlp.utils.DownloadError as e:
             logger.error(f"Download error: {e}")
             if "ffmpeg" in str(e).lower():
-                logger.error("This appears to be an ffmpeg error. Make sure ffmpeg is installed correctly.")
+                logger.error(
+                    "This appears to be an ffmpeg error. Make sure ffmpeg is installed correctly."
+                )
         except Exception as e:
             logger.error(f"Unexpected error: {e}", exc_info=True)
+
+    def get_info(self):
+        """
+        Retrieve video metadata (id, title, etc.) for the configured URLs without downloading media.
+        """
+        info_entries = []
+        # Use minimal options for metadata extraction: quiet, no warnings, skip media download
+        opts: dict[str, Any] = {
+            "ignoreerrors": True,
+            "quiet": False,  # Temporarily enable output to debug
+            "no_warnings": True,
+            "skip_download": True,
+            "extract_flat": True,  # Extract flattened playlist info
+            "dump_single_json": True,  # Help with debugging
+        }
+        # Enforce playlist limit at extract time
+        if self.limit:
+            opts["playlistend"] = self.limit
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            for url in self.urls:
+                print(f"Fetching metadata for {url}...")
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    print(f"No info found for {url}")
+                    continue
+
+                # Debug information
+                print(f"Info type: {type(info)}")
+                if isinstance(info, dict):
+                    print(f"Keys: {list(info.keys())}")
+                    if "entries" in info:
+                        print(f"Found {len(info['entries'])} entries")
+                    else:
+                        print("No entries found in result")
+
+                if "entries" in info:
+                    entries = info.get("entries", []) or []
+                    # Filter out None entries and ensure each has an ID
+                    entries = [
+                        e for e in entries if e and isinstance(e, dict) and e.get("id")
+                    ]
+                    print(f"Filtered to {len(entries)} valid entries with IDs")
+                    if self.limit:
+                        entries = entries[: self.limit]
+                        print(
+                            f"Limited to {len(entries)} entries due to limit={self.limit}"
+                        )
+                    info_entries.extend(entries)
+                else:
+                    # Only add as single entry if it has an ID (likely a video, not a channel)
+                    if isinstance(info, dict) and info.get("id"):
+                        print(f"Adding single entry with ID: {info.get('id')}")
+                    info_entries.append(info)
+
+        print(f"Final result: {len(info_entries)} entries to return")
+        return info_entries
+
+    def get_channel_videos(self):
+        """
+        Special method to extract video IDs from YouTube channels/playlists.
+        Designed to handle YouTube channel URLs that might not work correctly with standard extraction.
+        """
+        videos = []
+
+        # Options specific for channel/playlist extraction
+        opts = {
+            "ignoreerrors": True,
+            "quiet": True,  # Suppress yt-dlp output
+            "extract_flat": True,  # Only extract video info without downloading
+            "skip_download": True,
+        }
+
+        if self.limit:
+            opts["playlistend"] = self.limit
+
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            for url in self.urls:
+                try:
+                    # Get channel/playlist info
+                    info = ydl.extract_info(url, download=False)
+
+                    if not info:
+                        logger.warning(f"No info could be extracted from {url}")
+                        continue
+
+                    # Extract video entries from channel/playlist
+                    if "entries" in info and info["entries"]:
+                        # Filter for valid entries (must have an ID)
+                        valid_entries = []
+                        for entry in info["entries"]:
+                            if entry and isinstance(entry, dict) and "id" in entry:
+                                # Create a simple dict with essential video info
+                                video_info = {
+                                    "id": entry["id"],
+                                    "title": entry.get("title", f"Video {entry['id']}"),
+                                    "uploader": entry.get("uploader", "Unknown"),
+                                    "url": f"https://youtu.be/{entry['id']}",
+                                }
+                                valid_entries.append(video_info)
+
+                        # Apply limit if needed
+                        if self.limit and len(valid_entries) > self.limit:
+                            valid_entries = valid_entries[: self.limit]
+
+                        videos.extend(valid_entries)
+                        logger.info(f"Extracted {len(valid_entries)} videos from {url}")
+                    else:
+                        logger.warning(f"No video entries found in {url}")
+
+                except Exception as e:
+                    logger.error(f"Error extracting videos from {url}: {e}")
+
+        return videos
 
 
 def check_ffmpeg() -> bool:
@@ -221,6 +352,7 @@ def check_ffmpeg() -> bool:
         bool: True if ffmpeg is available, False otherwise
     """
     return shutil.which("ffmpeg") is not None
+
 
 async def main() -> int:
     """Entry point of the script."""
@@ -238,64 +370,59 @@ async def main() -> int:
         description="Download videos or channels from YouTube using yt-dlp"
     )
     parser.add_argument(
-        "-u", "--urls",
+        "-u",
+        "--urls",
         nargs="+",  # Accept one or more URLs
-        help="One or more URLs of YouTube videos or channels to download"
+        help="One or more URLs of YouTube videos or channels to download",
     )
     parser.add_argument(
-        "-o", "--output-dir",
+        "-o",
+        "--output-dir",
         type=Path,
         default=Path("./downloads"),
-        help="Directory to save downloaded videos"
+        help="Directory to save downloaded videos",
     )
     parser.add_argument(
-        "-f", "--format",
+        "-f",
+        "--format",
         default="best",
-        help="Video format code (default: best). Use 'mp4' for most compatibility"
+        help="Video format code (default: best). Use 'mp4' for most compatibility",
     )
     parser.add_argument(
         "--force-mp4",
         action="store_true",
-        help="Force output to mp4 format (recommended for compatibility)"
+        help="Force output to mp4 format (recommended for compatibility)",
     )
     parser.add_argument(
-        "-l", "--limit",
-        type=int,
-        help="Maximum number of videos to download"
+        "-l", "--limit", type=int, help="Maximum number of videos to download"
     )
     parser.add_argument(
-        "-a", "--audio-only",
-        action="store_true",
-        help="Extract audio only (mp3)"
+        "-a", "--audio-only", action="store_true", help="Extract audio only (mp3)"
     )
     parser.add_argument(
-        "-s", "--subtitles",
-        action="store_true",
-        help="Download subtitles if available"
+        "-s", "--subtitles", action="store_true", help="Download subtitles if available"
     )
     parser.add_argument(
-        "-p", "--playlist-items",
-        help="Comma-separated list of playlist items to download, e.g., '1,3,5-7'"
+        "-p",
+        "--playlist-items",
+        help="Comma-separated list of playlist items to download, e.g., '1,3,5-7'",
     )
     parser.add_argument(
-        "-c", "--cookies",
+        "-c",
+        "--cookies",
         type=Path,
-        help="Path to cookies file for authenticated access"
+        help="Path to cookies file for authenticated access",
     )
     parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="Enable verbose output"
+        "-v", "--verbose", action="store_true", help="Enable verbose output"
     )
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug mode (more verbose output)"
+        "--debug", action="store_true", help="Enable debug mode (more verbose output)"
     )
     parser.add_argument(
         "--use-native-progress",
         action="store_true",
-        help="Use yt-dlp's native progress display instead of custom progress"
+        help="Use yt-dlp's native progress display instead of custom progress",
     )
 
     args = parser.parse_args()
@@ -340,6 +467,7 @@ async def main() -> int:
     except Exception as e:
         logger.error(f"An error occurred: {e}", exc_info=True)
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(asyncio.run(main()))
