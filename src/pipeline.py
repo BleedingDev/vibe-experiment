@@ -6,6 +6,7 @@ from pathlib import Path
 import os
 import subprocess
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from db import Database
 from download import VideoDownloader
@@ -19,7 +20,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s:%(mess
 DOWNLOAD_DIR = Path("./downloads")
 
 # Configurable maximum retry attempts for failed videos
-MAX_RETRIES = int(os.getenv("MAX_RETRIES", "1"))
+def get_env_int(name: str, default: int, max_val: int = 16) -> int:
+    """Retrieve integer from environment or return default, clamped to max_val."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return min(value, max_val)
+
+MAX_RETRIES = get_env_int("MAX_RETRIES", 1)
 
 
 def prepare(args):
@@ -159,6 +168,8 @@ def prepare(args):
 
 
 def download_video(db, vid, video):
+    # Use a fresh DB connection per thread to avoid SQLite cross-thread errors
+    db = Database()
     """
     Download a video based on its metadata.
     Returns the file path to the downloaded or local video file.
@@ -204,6 +215,8 @@ def download_video(db, vid, video):
 
 
 def transcribe_video(db, vid, file_path, transcriber):
+    # Use a fresh DB connection per thread to avoid SQLite cross-thread errors
+    db = Database()
     """
     Transcribe a video file and save the results to the database.
     """
@@ -321,6 +334,64 @@ async def ingest_transcription(db, vid, transcription_path):
         db.update_video_status(vid, "failed", error_msg)
         return False
 
+
+async def worker(step: str, semaphore: asyncio.Semaphore, loop: asyncio.AbstractEventLoop, executor: ThreadPoolExecutor):
+    """Worker coroutine for pipeline step."""
+    db = Database()
+    while True:
+        async with semaphore:
+            video = db.get_next_video(step)
+            if not video:
+                await asyncio.sleep(2)
+                logging.debug(f"No {step} tasks available, sleeping")
+                continue
+            vid = video["id"]
+            try:
+                if step == "download":
+                    file_path = await loop.run_in_executor(executor, download_video, db, vid, video)
+                    db.update_video_status(vid, "downloaded")
+                    logging.info(f"Downloaded video {vid}, scheduling transcription")
+                elif step == "transcribe":
+                    filepath = video.get("filepath")
+                    if not filepath:
+                        logging.debug(f"No filepath for video {vid}, skipping transcription.")
+                        continue
+                    logging.info(f"Starting transcription for video {vid}")
+                    await loop.run_in_executor(executor, transcribe_video, db, vid, Path(filepath), Transcriber())
+                    logging.info(f"Completed transcription for video {vid}")
+                elif step == "ingest":
+                    transcription_path = Path(video.get("filepath", "")).with_name(f"{vid}_transcription.md")
+                    await ingest_transcription(db, vid, transcription_path)
+            except Exception as e:
+                logging.error(f"Error in {step} worker for {vid}: {e}")
+                continue
+
+async def run_concurrent(args):
+    """Run pipeline steps concurrently with bounded parallelism."""
+    download_limit = get_env_int("MAX_PARALLEL_DOWNLOADS", 2)
+    transcribe_limit = get_env_int("MAX_PARALLEL_TRANSCRIBES", 2)
+    ingest_limit = get_env_int("MAX_PARALLEL_INGESST", 2)
+    download_sem = asyncio.Semaphore(download_limit)
+    transcribe_sem = asyncio.Semaphore(transcribe_limit)
+    ingest_sem = asyncio.Semaphore(ingest_limit)
+    executor = ThreadPoolExecutor(max_workers=download_limit + transcribe_limit + ingest_limit)
+    loop = asyncio.get_event_loop()
+    # Launch multiple workers per step equal to their configured limits
+    tasks: list[asyncio.Task] = []
+    for _ in range(download_limit):
+        tasks.append(loop.create_task(worker("download", download_sem, loop, executor)))
+    for _ in range(transcribe_limit):
+        tasks.append(loop.create_task(worker("transcribe", transcribe_sem, loop, executor)))
+    for _ in range(ingest_limit):
+        tasks.append(loop.create_task(worker("ingest", ingest_sem, loop, executor)))
+    try:
+        await asyncio.gather(*tasks)
+    except KeyboardInterrupt:
+        logging.info("Graceful shutdown initiated, cancelling tasks...")
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        executor.shutdown(wait=False)
 
 def run_worker(args):
     """
@@ -709,6 +780,11 @@ def main():
         choices=["download", "transcribe", "ingest"],
         help="Specific step to run (default: run full pipeline)",
     )
+    run_parser.add_argument(
+        "--concurrent",
+        action="store_true",
+        help="Run pipeline steps concurrently",
+    )
 
     sub.add_parser("status", help="Show pipeline status")
 
@@ -736,7 +812,10 @@ def main():
     if args.cmd == "prepare":
         prepare(args)
     elif args.cmd == "run":
-        run_worker(args)
+        if getattr(args, "concurrent", False):
+            asyncio.run(run_concurrent(args))
+        else:
+            run_worker(args)
     elif args.cmd == "status":
         status(args)
     elif args.cmd == "retry":

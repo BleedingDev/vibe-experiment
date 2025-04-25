@@ -82,31 +82,40 @@ class Database:
 
     def get_next_video(self, step=None):
         """
-        Get the next video to process based on the pipeline step.
-
-        Args:
-            step: Optional pipeline step (e.g., 'download', 'transcribe'). If not provided,
-                 gets videos with 'todo' status for full pipeline processing.
+        Atomically claim and return the next video to process for the given pipeline step.
+        Ensures only one worker can claim a video at a time, preventing race conditions.
         """
         cur = self.conn.cursor()
-
         if step == "transcribe":
-            # For transcription step, look for videos that are already downloaded
-            status_filter = "status='downloaded'"
+            status_to_claim = "downloaded"
+            new_status = "transcribing"
         elif step == "download":
-            # For download step, look for videos marked as todo
-            status_filter = "status='todo'"
+            status_to_claim = "todo"
+            new_status = "downloading"
         elif step == "ingest":
-            # For ingest step, look for videos that are already transcribed
-            status_filter = "status='transcribed'"
+            status_to_claim = "transcribed"
+            new_status = "ingesting"
         else:
-            # For full pipeline, look for any videos marked as todo
-            status_filter = "status='todo'"
-
-        logging.info(f"Looking for videos matching: {status_filter}")
+            status_to_claim = "todo"
+            new_status = "downloading"
+        # Use a transaction to atomically claim the next video
+        self.conn.execute("BEGIN IMMEDIATE")
         row = cur.execute(
-            f"SELECT * FROM videos WHERE {status_filter} ORDER BY created_at LIMIT 1"
+            "SELECT id FROM videos WHERE status=? ORDER BY created_at LIMIT 1",
+            (status_to_claim,),
         ).fetchone()
+        if not row:
+            self.conn.commit()
+            return None
+        vid = row["id"]
+        now = datetime.utcnow().isoformat()
+        cur.execute(
+            "UPDATE videos SET status=?, updated_at=? WHERE id=?",
+            (new_status, now, vid),
+        )
+        self.conn.commit()
+        # Return the full row after update
+        row = cur.execute("SELECT * FROM videos WHERE id=?", (vid,)).fetchone()
         return dict(row) if row else None
 
     def update_video_status(self, id: str, status: str, error: str | None = None):
