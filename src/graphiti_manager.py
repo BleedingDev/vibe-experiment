@@ -584,11 +584,13 @@ class GraphitiManager:
             List of search results
         """
         try:
-            results = await self.graphiti.search_edges(
-                query=query,
-                edge_type=None,  # Search all edge types
-                limit=limit,
-            )
+            # Graphiti's search method doesn't accept limit parameter directly
+            results = await self.graphiti.search(query=query)
+
+            # Apply limit after search
+            if results and limit > 0:
+                results = results[:limit]
+
             return results
         except Exception as e:
             logger.error(f"Failed to search knowledge graph: {str(e)}")

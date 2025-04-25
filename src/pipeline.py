@@ -567,6 +567,123 @@ def errors(args):
         print(f"    Updated At: {v.get('updated_at')}")
 
 
+async def search(args):
+    """
+    Search the knowledge graph for information matching a query.
+
+    Args:
+        args: Command line arguments including a 'query' parameter
+    """
+    try:
+        # Initialize GraphitiManager
+        graphiti = GraphitiManager()
+
+        # Get the search query and limit from command line arguments
+        query = args.query
+        limit = args.limit
+
+        print(f"Searching graph for: '{query}' (limit: {limit} results)")
+
+        # Perform the search
+        results = await graphiti.search_graph(query=query, limit=limit)
+
+        if not results:
+            print("No results found.")
+            return
+
+        print(f"\nFound {len(results)} results:")
+
+        # Process and display the results
+        for i, result in enumerate(results):
+            print(f"\n--- Result {i + 1} ---")
+
+            try:
+                # Try to access attributes of EntityEdge objects directly
+                if hasattr(result, "edge_content"):
+                    print(f"Content: {result.edge_content}")
+                elif hasattr(result, "episode_body"):
+                    print(f"Content: {result.episode_body}")
+                elif isinstance(result, dict):
+                    # Try dictionary style access if it's a dict
+                    fact = result.get(
+                        "fact", result.get("content", "No content available")
+                    )
+                    print(f"Content: {fact}")
+                else:
+                    # Fallback: just print the string representation
+                    print(f"Content: {str(result)}")
+
+                # Try to get source description if available
+                source_desc = None
+                if hasattr(result, "source_description"):
+                    source_desc = result.source_description
+                elif isinstance(result, dict):
+                    source_desc = result.get("source_description")
+
+                if source_desc:
+                    print(f"Source: {source_desc}")
+
+            except Exception as e:
+                print(f"Error processing search result: {str(e)}")
+
+            # If there's a video ID, format a clickable link with timestamp if available
+            video_id = None
+
+            # Try to extract video ID and timestamp from the result metadata
+            try:
+                if isinstance(result, dict) and "source_description" in result:
+                    desc = result["source_description"]
+                    if "video" in desc.lower():
+                        parts = desc.split()
+                        for part in parts:
+                            if "video" not in part.lower():
+                                video_id = part
+                                break
+                elif (
+                    hasattr(result, "source_description") and result.source_description
+                ):
+                    desc = result.source_description
+                    if "video" in desc.lower():
+                        parts = desc.split()
+                        for part in parts:
+                            if "video" not in part.lower():
+                                video_id = part
+                                break
+            except Exception as e:
+                print(f"Error extracting video ID: {str(e)}")
+
+            # If we have a video ID, try to create a YouTube link
+            if video_id and video_id != "video":
+                # Remove any "for" prefix if present
+                if video_id.startswith("for"):
+                    video_id = video_id[3:]
+
+                # Handle path-based IDs (channel_id/video_id format)
+                if "/" in video_id:
+                    _, video_id = video_id.split("/", 1)
+
+                print(f"Video ID: {video_id}")
+
+                # Check if there's timestamp info in the fact or metadata
+                import re
+
+                timestamp_match = re.search(r"(\d{1,2}):(\d{2})(?::(\d{2}))?", fact)
+                if timestamp_match:
+                    minutes = int(timestamp_match.group(1))
+                    seconds = int(timestamp_match.group(2))
+                    hours = (
+                        int(timestamp_match.group(3)) if timestamp_match.group(3) else 0
+                    )
+                    timestamp_seconds = hours * 3600 + minutes * 60 + seconds
+
+                    print(
+                        f"YouTube link: https://youtu.be/{video_id}?t={timestamp_seconds}"
+                    )
+
+    except Exception as e:
+        print(f"Error searching graph: {str(e)}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Pipeline orchestrator for graph-memory"
@@ -600,6 +717,16 @@ def main():
 
     sub.add_parser("errors", help="List all failed videos with errors")
 
+    # Add search command
+    search_parser = sub.add_parser("search", help="Search the knowledge graph")
+    search_parser.add_argument("query", help="Search query")
+    search_parser.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum number of results to return (default: 5)",
+    )
+
     args = parser.parse_args()
     if args.cmd == "prepare":
         prepare(args)
@@ -611,6 +738,9 @@ def main():
         retry(args)
     elif args.cmd == "errors":
         errors(args)
+    elif args.cmd == "search":
+        # Search is async, so we need to run it with asyncio
+        asyncio.run(search(args))
     else:
         parser.print_help()
 
